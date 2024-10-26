@@ -25,14 +25,14 @@ class S3_Requester():
         pages = objects.paginate(Bucket=self.request_bucket, PaginationConfig={'MaxItems': 1})
 
         for page in pages:
-            key = page['Contents'][0]['Key']
-            object = s3.get_object(Bucket=self.request_bucket, Key=key)
-            logger.info("Request Retriever - Retrieved Request")
-            s3.delete_object(Bucket=self.request_bucket, Key=key)
-            logger.info("Request Retriever - Deleted Request")
-            return json.loads(object['Body'].read().decode('utf-8'))
-        
-        return False
+            if 'Contents' in page:
+                key = page['Contents'][0]['Key']
+                object = s3.get_object(Bucket=self.request_bucket, Key=key)
+                logger.info("Request Retriever - Retrieved Request")
+                s3.delete_object(Bucket=self.request_bucket, Key=key)
+                logger.info("Request Retriever - Deleted Request")
+                return json.loads(object['Body'].read().decode('utf-8'))
+            return False
 
         
 
@@ -44,8 +44,7 @@ class Consumer:
 
     def run(self):
         try:
-            x = True
-            while x:
+            while True:
                 if self.request_data():
                     if self.data['type'] == 'create':
                         self.create()
@@ -55,7 +54,6 @@ class Consumer:
 
                     elif self.data['type'] == 'update':
                         self.update()
-                    x = False
 
                 else:
                     time.sleep(0.1)
@@ -139,7 +137,8 @@ def initialize_parser():
 
 def initialize_logger():
     logging.basicConfig(filename='consumer.log', level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelnames)s - %(message)s')
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+        datefmt='%Y-%m-%d %H:%M:%S')
     return logging.getLogger(__name__)
     
 if __name__ == "__main__":
