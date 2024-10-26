@@ -1,6 +1,7 @@
 import boto3
 import argparse
 import time
+import json
 
 
 # request objects
@@ -20,11 +21,22 @@ import time
 
 class S3_Requester():
     def __init__(self, bucket_name):
-        self.s3 = boto3.resouce('s3')
-        self.request_bucket = self.s3.Bucket(bucket_name)
+        self.request_bucket = bucket_name
 
     def retrieve(self):
-        pass
+        s3 = boto3.client('s3')
+        objects = s3.get_paginator('list_objects_v2')
+        pages = objects.paginate(Bucket=self.request_bucket, PaginationConfig={'MaxItems': 1})
+
+        for page in pages:
+            key = page['Contents'][0]['Key']
+            object = s3.get_object(Bucket=self.request_bucket, Key=key)
+            # s3.delete_object(Bucket=self.request_bucket, Key=key)
+            return json.loads(object['Body'].read().decode('utf-8'))
+        
+        return False
+
+        
 
 class Consumer:
     def __init__(self, request, store):
@@ -33,16 +45,20 @@ class Consumer:
 
     def run(self):
         try:
-            while True:
-                if self.request():
-                    pass
+            x = True
+            while x:
+                if self.request_data():
+                    print(self.data)
+                    x = False
                 else:
                     time.sleep(0.1)
+    
         except KeyboardInterrupt:
             exit(0)
 
     def request_data(self):
-        return self.request.retrieve()
+        self.data = self.request.retrieve()
+        return self.data
 
     def create(self):
         pass
@@ -55,12 +71,11 @@ class Consumer:
 
 class S3_Consumer(Consumer):
     def __init__(self, request, store):
-        super(self, S3_Requester(request), store)
-        s3 = boto3.resource('s3')
-        self.bucket = s3.Bucket(store)
+        super(S3_Consumer, self).__init__(S3_Requester(request), store)
+        self.s3 = boto3.resource('s3')
 
-    def request_data(self):
-        
+    def create(self):
+        pass
 
 
 def initialize_parser():
@@ -74,9 +89,9 @@ if __name__ == "__main__":
     parser = initialize_parser()
     args = parser.parse_args()
     if args.request and args.store_s3:
-        consumer = Consumer(args.request, args.store_s3, 0)
+        consumer = S3_Consumer(args.request, args.store_s3)
         consumer.run()
     elif args.request and args.store_db:
-        consumer = Consumer(args.request, args.store_db, 1)
+        consumer = S3_Consumer(args.request, args.store_db)
         consumer.run()
 
