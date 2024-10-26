@@ -2,7 +2,7 @@ import boto3
 import argparse
 import time
 import json
-
+import logging
 
 
 # implement create function
@@ -15,8 +15,9 @@ import json
 # create unit tests
 
 class S3_Requester():
-    def __init__(self, bucket_name):
+    def __init__(self, bucket_name, logger):
         self.request_bucket = bucket_name
+        self.logger = logger
 
     def retrieve(self):
         s3 = boto3.client('s3')
@@ -26,7 +27,9 @@ class S3_Requester():
         for page in pages:
             key = page['Contents'][0]['Key']
             object = s3.get_object(Bucket=self.request_bucket, Key=key)
-            # s3.delete_object(Bucket=self.request_bucket, Key=key)
+            logger.info("Request Retriever - Retrieved Request")
+            s3.delete_object(Bucket=self.request_bucket, Key=key)
+            logger.info("Request Retriever - Deleted Request")
             return json.loads(object['Body'].read().decode('utf-8'))
         
         return False
@@ -34,9 +37,10 @@ class S3_Requester():
         
 
 class Consumer:
-    def __init__(self, request, store):
+    def __init__(self, request, store, logger):
         self.request = request
         self.store = store
+        self.logger = logger
 
     def run(self):
         try:
@@ -74,8 +78,8 @@ class Consumer:
 
 
 class S3_Consumer(Consumer):
-    def __init__(self, request, store):
-        super(S3_Consumer, self).__init__(S3_Requester(request), store)
+    def __init__(self, request, store, logger):
+        super(S3_Consumer, self).__init__(S3_Requester(request, logger), store, logger)
         self.s3 = boto3.client('s3')
 
     def create(self):
@@ -84,6 +88,7 @@ class S3_Consumer(Consumer):
         owner_name = self.data['owner'].lower().replace(" ", "-")
         key = f"widgets/{owner_name}/{self.data['widgetId']}"
         self.s3.put_object(Bucket=self.store, Body=str(self.data), Key=key)
+        logger.info("Widget Creater - Created Widget in S3 Bucket")
 
     def delete(self):
         #TODO: implement delete method
@@ -95,13 +100,20 @@ class S3_Consumer(Consumer):
 
 
 class DB_Consumer(Consumer):
-    def __init__(self, request, store):
-        super(DB_Consumer, self).__init__(S3_Requester(request), store)
+    def __init__(self, request, store, logger):
+        super(DB_Consumer, self).__init__(S3_Requester(request, logger), store, logger)
         db = boto3.resource('dynamodb')
         self.table = db.Table(self.store)
 
     def create(self):
-        pass
+        del self.data['type']
+        del self.data['requestId']
+        self.data['id'] = self.data['widgetId']
+        del self.data['widgetId']
+
+        self.data = self.transform(self.data)
+        self.table.put_item(TableName=self.store, Item=self.data)
+        logger.info("Widget Creater - Created Widget in DynamoDB")
 
     def delete(self):
         #TODO: implement delete method
@@ -111,6 +123,12 @@ class DB_Consumer(Consumer):
         #TODO: implement update method
         pass
 
+    def transform(self, dictionary):
+        for object in dictionary['otherAttributes']:
+            dictionary[object['name']] = object['value']
+        del dictionary['otherAttributes']
+        return dictionary
+
 
 def initialize_parser():
     parser = argparse.ArgumentParser()
@@ -119,13 +137,19 @@ def initialize_parser():
     parser.add_argument("-dwt", "--store_db", help="name of dynamodb table")
     return parser
 
+def initialize_logger():
+    logging.basicConfig(filename='consumer.log', level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelnames)s - %(message)s')
+    return logging.getLogger(__name__)
+    
 if __name__ == "__main__":
+    logger = initialize_logger()
     parser = initialize_parser()
     args = parser.parse_args()
     if args.request and args.store_s3:
-        consumer = S3_Consumer(args.request, args.store_s3)
+        consumer = S3_Consumer(args.request, args.store_s3, logger)
         consumer.run()
     elif args.request and args.store_db:
-        consumer = DB_Consumer(args.request, args.store_db)
+        consumer = DB_Consumer(args.request, args.store_db, logger)
         consumer.run()
 
