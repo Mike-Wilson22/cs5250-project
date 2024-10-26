@@ -4,11 +4,6 @@ import time
 import json
 
 
-# request objects
-
-# process JSON request
-
-# call different function depending on request
 
 # implement create function
 
@@ -48,8 +43,16 @@ class Consumer:
             x = True
             while x:
                 if self.request_data():
-                    print(self.data)
+                    if self.data['type'] == 'create':
+                        self.create()
+
+                    elif self.data['type'] == 'delete':
+                        self.delete()
+
+                    elif self.data['type'] == 'update':
+                        self.update()
                     x = False
+
                 else:
                     time.sleep(0.1)
     
@@ -69,12 +72,43 @@ class Consumer:
     def update(self):
         pass
 
+
 class S3_Consumer(Consumer):
     def __init__(self, request, store):
         super(S3_Consumer, self).__init__(S3_Requester(request), store)
-        self.s3 = boto3.resource('s3')
+        self.s3 = boto3.client('s3')
 
     def create(self):
+        del self.data['type']
+        del self.data['requestId']
+        owner_name = self.data['owner'].lower().replace(" ", "-")
+        key = f"widgets/{owner_name}/{self.data['widgetId']}"
+        self.s3.put_object(Bucket=self.store, Body=str(self.data), Key=key)
+
+    def delete(self):
+        #TODO: implement delete method
+        pass
+
+    def update(self):
+        #TODO: implement update method
+        pass
+
+
+class DB_Consumer(Consumer):
+    def __init__(self, request, store):
+        super(DB_Consumer, self).__init__(S3_Requester(request), store)
+        db = boto3.resource('dynamodb')
+        self.table = db.Table(self.store)
+
+    def create(self):
+        pass
+
+    def delete(self):
+        #TODO: implement delete method
+        pass
+
+    def update(self):
+        #TODO: implement update method
         pass
 
 
@@ -92,6 +126,6 @@ if __name__ == "__main__":
         consumer = S3_Consumer(args.request, args.store_s3)
         consumer.run()
     elif args.request and args.store_db:
-        consumer = S3_Consumer(args.request, args.store_db)
+        consumer = DB_Consumer(args.request, args.store_db)
         consumer.run()
 
