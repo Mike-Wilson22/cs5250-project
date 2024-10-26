@@ -18,19 +18,19 @@ class S3_Requester():
     def __init__(self, bucket_name, logger):
         self.request_bucket = bucket_name
         self.logger = logger
+        self.s3 = boto3.client('s3')
 
     def retrieve(self):
-        s3 = boto3.client('s3')
-        objects = s3.get_paginator('list_objects_v2')
+        objects = self.s3.get_paginator('list_objects_v2')
         pages = objects.paginate(Bucket=self.request_bucket, PaginationConfig={'MaxItems': 1})
 
         for page in pages:
             if 'Contents' in page:
                 key = page['Contents'][0]['Key']
-                object = s3.get_object(Bucket=self.request_bucket, Key=key)
-                logger.info("Request Retriever - Retrieved Request")
-                s3.delete_object(Bucket=self.request_bucket, Key=key)
-                logger.info("Request Retriever - Deleted Request")
+                object = self.s3.get_object(Bucket=self.request_bucket, Key=key)
+                self.logger.info("Request Retriever - Retrieved Request")
+                self.s3.delete_object(Bucket=self.request_bucket, Key=key)
+                self.logger.info("Request Retriever - Deleted Request")
                 return json.loads(object['Body'].read().decode('utf-8'))
             return False
 
@@ -46,20 +46,19 @@ class Consumer:
         try:
             while True:
                 if self.request_data():
-                    if self.data['type'] == 'create':
-                        self.create()
-
-                    elif self.data['type'] == 'delete':
-                        self.delete()
-
-                    elif self.data['type'] == 'update':
-                        self.update()
-
+                    self.call_correct_function()
                 else:
                     time.sleep(0.1)
-    
         except KeyboardInterrupt:
             exit(0)
+
+    def call_correct_function(self):
+        if self.data['type'] == 'create':
+            self.create()
+        elif self.data['type'] == 'delete':
+            self.delete()
+        elif self.data['type'] == 'update':
+            self.update()
 
     def request_data(self):
         self.data = self.request.retrieve()
@@ -86,7 +85,7 @@ class S3_Consumer(Consumer):
         owner_name = self.data['owner'].lower().replace(" ", "-")
         key = f"widgets/{owner_name}/{self.data['widgetId']}"
         self.s3.put_object(Bucket=self.store, Body=str(self.data), Key=key)
-        logger.info("Widget Creater - Created Widget in S3 Bucket")
+        self.logger.info("Widget Creater - Created Widget in S3 Bucket")
 
     def delete(self):
         #TODO: implement delete method
@@ -111,7 +110,7 @@ class DB_Consumer(Consumer):
 
         self.data = self.transform(self.data)
         self.table.put_item(TableName=self.store, Item=self.data)
-        logger.info("Widget Creater - Created Widget in DynamoDB")
+        self.logger.info("Widget Creater - Created Widget in DynamoDB")
 
     def delete(self):
         #TODO: implement delete method
@@ -140,7 +139,7 @@ def initialize_logger():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
         datefmt='%Y-%m-%d %H:%M:%S')
     return logging.getLogger(__name__)
-    
+
 if __name__ == "__main__":
     logger = initialize_logger()
     parser = initialize_parser()
