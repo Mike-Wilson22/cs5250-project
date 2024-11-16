@@ -34,21 +34,69 @@ class S3_Requester():
                 return json.loads(object['Body'].read().decode('utf-8'))
             return False
 
-        
+class SQS_Requester():
+    def __init__(self, queue_name, logger):
+        self.queue_name = queue_name
+        self.logger = logger
+        self.sqs = boto3.client('sqs')
+        self.messages = []
+
+    def retrieve(self):
+        if len(self.messages) == 0:
+            response = self.sqs.receive_message(
+                QueueUrl=self.queue_name,
+                AttributeNames=[
+                    'SentTimestamp'
+                ],
+                MaxNumberOfMessages=10,
+                MessageAttributeNames=[
+                    'All'
+                ],
+                VisibilityTimeout=10,
+                WaitTimeSeconds=0
+            )
+
+            self.messages = response['Messages']
+            message = self.messages.pop()
+            receipt_handle = message['ReceiptHandle']
+
+            # Delete received message from queue
+            self.sqs.delete_message(
+                QueueUrl=self.queue_name,
+                ReceiptHandle=receipt_handle
+            )
+
+            print(self.messages)
+            return json.loads(message['Body'])
+
+        else:
+            message = self.messages.pop()
+            receipt_handle = message['ReceiptHandle']
+
+            # Delete received message from queue
+            self.sqs.delete_message(
+                QueueUrl=self.queue_name,
+                ReceiptHandle=receipt_handle
+            )
+            print(message)
+            return json.loads(message['Body'])
 
 class Consumer:
-    def __init__(self, request, store, logger):
+    def __init__(self, request, store, logger, timeout):
         self.request = request
         self.store = store
         self.logger = logger
+        self.time = time.time()
+        self.timeout = timeout
 
     def run(self):
         try:
-            while True:
+            while time.time() - self.time < self.timeout or self.timeout == -1:
                 if self.request_data():
                     self.call_correct_function()
                 else:
                     time.sleep(0.1)
+
         except KeyboardInterrupt:
             exit(0)
 
@@ -75,8 +123,8 @@ class Consumer:
 
 
 class S3_Consumer(Consumer):
-    def __init__(self, request, store, logger):
-        super(S3_Consumer, self).__init__(S3_Requester(request, logger), store, logger)
+    def __init__(self, requester, store, logger, timeout):
+        super(S3_Consumer, self).__init__(requester, store, logger, timeout)
         self.s3 = boto3.client('s3')
 
     def create(self):
@@ -97,8 +145,8 @@ class S3_Consumer(Consumer):
 
 
 class DB_Consumer(Consumer):
-    def __init__(self, request, store, logger):
-        super(DB_Consumer, self).__init__(S3_Requester(request, logger), store, logger)
+    def __init__(self, requester, store, logger, timeout):
+        super(DB_Consumer, self).__init__(requester, store, logger, timeout)
         db = boto3.resource('dynamodb')
         self.table = db.Table(self.store)
 
@@ -129,9 +177,10 @@ class DB_Consumer(Consumer):
 
 def initialize_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-rb", "--request", help="where to get requests")
+    parser.add_argument("-rb", "--request_s3", help="where to get requests (S3 bucket)")
     parser.add_argument("-wb", "--store_s3", help="where to store requests in s3 bucket")
     parser.add_argument("-dwt", "--store_db", help="name of dynamodb table")
+    parser.add_argument("-sqs", "--request_sqs", help="where to get requests (SQS queue)")
     return parser
 
 def initialize_logger():
@@ -144,10 +193,19 @@ if __name__ == "__main__":
     logger = initialize_logger()
     parser = initialize_parser()
     args = parser.parse_args()
-    if args.request and args.store_s3:
-        consumer = S3_Consumer(args.request, args.store_s3, logger)
-        consumer.run()
-    elif args.request and args.store_db:
-        consumer = DB_Consumer(args.request, args.store_db, logger)
-        consumer.run()
+    timeout = -1
+    if args.store_s3:
+        if args.request_s3:
+            consumer = S3_Consumer(S3_Requester(args.request_s3, logger), args.store_s3, logger, timeout)
+        else:
+            consumer = S3_Consumer(SQS_Requester(args.request_sqs, logger), args.store_s3, logger, timeout)
+    elif args.store_db:
+        if args.request_s3:
+            consumer = DB_Consumer(S3_Requester(args.request_s3, logger), args.store_db, logger, timeout)
+        else:
+            consumer = DB_Consumer(SQS_Requester(args.request_sqs, logger), args.store_db, logger, timeout)
 
+    consumer.run()
+
+
+# SQS url: https://sqs.us-east-1.amazonaws.com/785484577828/cs5250-requests
