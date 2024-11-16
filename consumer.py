@@ -3,6 +3,7 @@ import argparse
 import time
 import json
 import logging
+import botocore
 
 
 # implement create function
@@ -55,6 +56,7 @@ class SQS_Requester():
                 VisibilityTimeout=10,
                 WaitTimeSeconds=0
             )
+            self.logger.info(f"Request Retriever - Retrieved {len(self.messages)} Requests")
 
             self.messages = response['Messages']
             message = self.messages.pop()
@@ -65,8 +67,8 @@ class SQS_Requester():
                 QueueUrl=self.queue_name,
                 ReceiptHandle=receipt_handle
             )
+            self.logger.info("Request Retriever - Deleted Request")
 
-            print(self.messages)
             return json.loads(message['Body'])
 
         else:
@@ -78,7 +80,8 @@ class SQS_Requester():
                 QueueUrl=self.queue_name,
                 ReceiptHandle=receipt_handle
             )
-            print(message)
+            self.logger.info("Request Retriever - Deleted Request")
+
             return json.loads(message['Body'])
 
 class Consumer:
@@ -133,15 +136,41 @@ class S3_Consumer(Consumer):
         owner_name = self.data['owner'].lower().replace(" ", "-")
         key = f"widgets/{owner_name}/{self.data['widgetId']}"
         self.s3.put_object(Bucket=self.store, Body=str(self.data), Key=key)
-        self.logger.info("Widget Creater - Created Widget in S3 Bucket")
+        self.logger.info("Widget Processor - Created Widget in S3 Bucket")
 
     def delete(self):
-        #TODO: implement delete method
-        pass
+        owner_name = self.data['owner'].lower().replace(" ", "-")
+        key = f"widgets/{owner_name}/{self.data['widgetId']}"
+        try:
+            self.s3.head_object(Bucket=self.store, Key=key)
+            self.s3.delete_object(Bucket=self.self.store, Key=key)
+            self.logger.info("Widget Processor - Deleted Widget from S3 Bucket")
+
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                self.logger.warning("Widget Processor - Delete Request Failed, Widget Does Not Exist")
+            else:
+                exit(1)
 
     def update(self):
-        #TODO: implement update method
-        pass
+        owner_name = self.data['owner'].lower().replace(" ", "-")
+        key = f"widgets/{owner_name}/{self.data['widgetId']}"
+        try:
+            str_object = self.s3.get_object(Bucket=self.request_bucket, Key=key)
+            dict_object = json.loads(str_object['Body'].read().decode('utf-8'))
+            for item_old in len(0, dict_object['otherAttributes']):
+                for item_new in self.data['otherAttributes']:
+                    if dict_object['otherAttributes'][item_old]['name'] == item_new['name'] and item_new['value'] != None:
+                        dict_object['otherAttributes'][item_old]['value'] = item_new['value']
+
+            self.s3.put_object(Bucket=self.store, Body=str(dict_object), Key=key)
+            self.logger.info("Widget Processor - Updated Widget in S3 Bucket")
+
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                self.logger.warning("Widget Processor - Update Request Failed, Widget Does Not Exist")
+            else:
+                exit(1)
 
 
 class DB_Consumer(Consumer):
@@ -158,15 +187,35 @@ class DB_Consumer(Consumer):
 
         self.data = self.transform(self.data)
         self.table.put_item(TableName=self.store, Item=self.data)
-        self.logger.info("Widget Creater - Created Widget in DynamoDB")
+        self.logger.info("Widget Processor - Created Widget in DynamoDB")
 
     def delete(self):
-        #TODO: implement delete method
-        pass
+        check_item = self.table.get_item(Key={'id' : self.data['widgetId']})
+        if 'Item' in check_item:
+            self.table.delete_item(Key={'id': self.data['widgetId']})
+            self.logger.info("Widget Processor - Deleted Widget in DynamoDB")
+        else:
+            self.logger.warning("Widget Processor - Update Request Failed, Widget Does Not Exist")
 
     def update(self):
-        #TODO: implement update method
-        pass
+        check_item = self.table.get_item(Key={'id' : self.data['widgetId']})
+        if 'Item' in check_item:
+            update_expr = "SET "
+            expr_attr_values = {}
+            for item in self.data['otherAttributes']:
+                update_expr += f"{item['name']} = :{item['value']}, "
+                expr_attr_values[f":{item['name']}"] = item['value']
+                        
+            # Perform the update
+            self.table.update_item(
+                Key={'id' : self.data['widgetId']},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_attr_values
+            )
+
+            self.logger.info("Widget Processor - Deleted Widget in DynamoDB")
+        else:
+            self.logger.warning("Widget Processor - Update Request Failed, Widget Does Not Exist")
 
     def transform(self, dictionary):
         for object in dictionary['otherAttributes']:
