@@ -56,20 +56,23 @@ class SQS_Requester():
                 VisibilityTimeout=10,
                 WaitTimeSeconds=0
             )
-            self.logger.info(f"Request Retriever - Retrieved {len(self.messages)} Requests")
+            
+            if 'Messages' in response.keys():
+                self.messages = response['Messages']
+                self.logger.info(f"Request Retriever - Retrieved {len(self.messages)} Requests")
 
-            self.messages = response['Messages']
-            message = self.messages.pop()
-            receipt_handle = message['ReceiptHandle']
+                message = self.messages.pop()
+                receipt_handle = message['ReceiptHandle']
 
-            # Delete received message from queue
-            self.sqs.delete_message(
-                QueueUrl=self.queue_name,
-                ReceiptHandle=receipt_handle
-            )
-            self.logger.info("Request Retriever - Deleted Request")
+                # Delete received message from queue
+                self.sqs.delete_message(
+                    QueueUrl=self.queue_name,
+                    ReceiptHandle=receipt_handle
+                )
+                self.logger.info("Request Retriever - Deleted Request")
 
-            return json.loads(message['Body'])
+                return json.loads(message['Body'])
+            return False
 
         else:
             message = self.messages.pop()
@@ -143,7 +146,7 @@ class S3_Consumer(Consumer):
         key = f"widgets/{owner_name}/{self.data['widgetId']}"
         try:
             self.s3.head_object(Bucket=self.store, Key=key)
-            self.s3.delete_object(Bucket=self.self.store, Key=key)
+            self.s3.delete_object(Bucket=self.store, Key=key)
             self.logger.info("Widget Processor - Deleted Widget from S3 Bucket")
 
         except botocore.exceptions.ClientError as e:
@@ -156,12 +159,22 @@ class S3_Consumer(Consumer):
         owner_name = self.data['owner'].lower().replace(" ", "-")
         key = f"widgets/{owner_name}/{self.data['widgetId']}"
         try:
-            str_object = self.s3.get_object(Bucket=self.request_bucket, Key=key)
-            dict_object = json.loads(str_object['Body'].read().decode('utf-8'))
-            for item_old in len(0, dict_object['otherAttributes']):
-                for item_new in self.data['otherAttributes']:
+            self.s3.head_object(Bucket=self.store, Key=key)
+            str_object = self.s3.get_object(Bucket=self.store, Key=key)
+            dict_object = json.loads(str_object['Body'].read().decode('utf-8').replace("'", "\""))
+            len_attr = len(dict_object['otherAttributes'])
+            for item_new in self.data['otherAttributes']:
+                changed = False
+                for item_old in range(0, len_attr):
                     if dict_object['otherAttributes'][item_old]['name'] == item_new['name'] and item_new['value'] != None:
                         dict_object['otherAttributes'][item_old]['value'] = item_new['value']
+                        changed = True
+                if not changed:
+                    dict_object['otherAttributes'].append({item_new['name'] : item_new['value']})
+
+            for key in self.data.keys():
+                if key not in ["otherAttributes", "widgetId", "owner", "type", "requestId"] and self.data[key] != '':
+                    dict_object[key] = self.data[key]
 
             self.s3.put_object(Bucket=self.store, Body=str(dict_object), Key=key)
             self.logger.info("Widget Processor - Updated Widget in S3 Bucket")
@@ -202,14 +215,27 @@ class DB_Consumer(Consumer):
         if 'Item' in check_item:
             update_expr = "SET "
             expr_attr_values = {}
+            expr_attr_names = {}
             for item in self.data['otherAttributes']:
-                update_expr += f"{item['name']} = :{item['value']}, "
-                expr_attr_values[f":{item['name']}"] = item['value']
-                        
+                if item['value'] != '' and item['name'] in ['height', 'width', 'color', 'rating']:
+                    update_expr += f"#{item['name']} = :{item['name']}, "
+                    expr_attr_names[f"#{item['name']}"] = item['name']
+                    expr_attr_values[f":{item['name']}"] = item['value']
+
+            for key in self.data.keys():
+                if key not in ["otherAttributes", "widgetId", "owner", "type", "requestId"] and self.data[key] != '':
+                    update_expr += f"#{key} = :{key}, "
+                    expr_attr_names[f"#{key}"] = key
+                    expr_attr_values[f":{key}"] = self.data[key]
+
+            if len(update_expr) > 5:  # Check if update_expr has more than just "SET "
+                update_expr = update_expr[:-2]  # Remove last two characters (", ")
+
             # Perform the update
             self.table.update_item(
                 Key={'id' : self.data['widgetId']},
                 UpdateExpression=update_expr,
+                ExpressionAttributeNames=expr_attr_names,
                 ExpressionAttributeValues=expr_attr_values
             )
 
