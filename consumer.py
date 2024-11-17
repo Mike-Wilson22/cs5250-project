@@ -4,6 +4,7 @@ import time
 import json
 import logging
 import botocore
+import sys
 
 
 # implement create function
@@ -263,7 +264,9 @@ def initialize_logger():
     logging.basicConfig(filename='consumer.log', level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
         datefmt='%Y-%m-%d %H:%M:%S')
-    return logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
+    logger.addHandler(logging.StreamHandler(sys.stdout))
+    return logger
 
 if __name__ == "__main__":
     logger = initialize_logger()
