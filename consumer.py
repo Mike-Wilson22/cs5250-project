@@ -170,11 +170,12 @@ class S3_Consumer(Consumer):
                         dict_object['otherAttributes'][item_old]['value'] = item_new['value']
                         changed = True
                 if not changed:
-                    dict_object['otherAttributes'].append({item_new['name'] : item_new['value']})
+                    if item_new['value'] != None:
+                        dict_object['otherAttributes'].append({"name" : item_new['name'], "value" : item_new['value']})
 
-            for key in self.data.keys():
-                if key not in ["otherAttributes", "widgetId", "owner", "type", "requestId"] and self.data[key] != '':
-                    dict_object[key] = self.data[key]
+            for new_key in self.data.keys():
+                if new_key not in ["otherAttributes", "widgetId", "owner", "type", "requestId"] and self.data[new_key] != '':
+                    dict_object[new_key] = self.data[new_key]
 
             self.s3.put_object(Bucket=self.store, Body=str(dict_object), Key=key)
             self.logger.info("Widget Processor - Updated Widget in S3 Bucket")
@@ -208,7 +209,7 @@ class DB_Consumer(Consumer):
             self.table.delete_item(Key={'id': self.data['widgetId']})
             self.logger.info("Widget Processor - Deleted Widget in DynamoDB")
         else:
-            self.logger.warning("Widget Processor - Update Request Failed, Widget Does Not Exist")
+            self.logger.warning("Widget Processor - Delete Request Failed, Widget Does Not Exist")
 
     def update(self):
         check_item = self.table.get_item(Key={'id' : self.data['widgetId']})
@@ -239,7 +240,7 @@ class DB_Consumer(Consumer):
                 ExpressionAttributeValues=expr_attr_values
             )
 
-            self.logger.info("Widget Processor - Deleted Widget in DynamoDB")
+            self.logger.info("Widget Processor - Updated Widget in DynamoDB")
         else:
             self.logger.warning("Widget Processor - Update Request Failed, Widget Does Not Exist")
 
